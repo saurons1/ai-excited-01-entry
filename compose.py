@@ -70,6 +70,27 @@ def petal(draw, tip, base, w, fill):
     draw.polygon([base, mid, tip, mid2], fill=fill)
 
 
+def ribbon_poly(p0, p1, p2, w0, w1, steps=24):
+    """Polygon for a tapered ribbon along a quadratic bezier.
+
+    Returns left-edge points (t=0..1) followed by right-edge points
+    reversed, so the first (steps+1) entries are the upper/left edge.
+    """
+    left, right = [], []
+    for i in range(steps + 1):
+        t = i / steps
+        x, y = bezier(p0, p1, p2, t)
+        tx, ty = tangent(p0, p1, p2, t)
+        l = math.hypot(tx, ty) or 1
+        nx, ny = -ty / l, tx / l
+        # width stays near w0 for most of the length, then tapers fast near
+        # the tip: a full, rounded fin lobe, not a straight triangle
+        w = w0 + (w1 - w0) * t ** 1.7
+        left.append((x + nx * w, y + ny * w))
+        right.append((x - nx * w, y - ny * w))
+    return left + right[::-1]
+
+
 def rot_ellipse(base_img, cx, cy, rx, ry, angle_deg, fill):
     """Paste a rotated ellipse onto base_img (RGB), returns new image."""
     tmp = Image.new("RGBA", (W, H), (0, 0, 0, 0))
@@ -148,14 +169,9 @@ def radius(t):
     return 32 + 88 * math.sin(math.pi * min(1.0, 0.12 + 0.88 * t)) ** 0.9
 
 
-# tail fin first (behind the body): two flowing lobes, rotated ellipses
-img = rot_ellipse(img, 312, 836, 112, 40, -30, ORANGE)
-img = rot_ellipse(img, 346, 856, 90, 28, -12, WHITE)
-img = rot_ellipse(img, 264, 812, 90, 32, -52, ORANGE_L)
-d = ImageDraw.Draw(img)
-d.line([(400, 790), (312, 836)], fill=ORANGE_D, width=4)
-d.line([(400, 790), (346, 856)], fill=ORANGE_D, width=4)
-d.line([(400, 790), (264, 812)], fill=ORANGE_D, width=4)
+# NOTE: the tail fin is drawn AFTER the bowl (section 9b) so it drapes over
+# the bowl rim and visibly connects to the body — v1's tail (three
+# ellipses below the sill) read as a detached slipper and is gone.
 
 # body silhouette mask
 mask = Image.new("L", (W, H), 0)
@@ -184,9 +200,9 @@ for i, (x, y) in enumerate(pts):
     ellipse(shd, x + 30, y + 34, r * 0.8, r * 0.78, fill=CREAM + (110,))
 shade = shade.filter(ImageFilter.GaussianBlur(12))
 skin = Image.alpha_composite(skin.convert("RGBA"), shade).convert("RGB")
-# three orange patches on the back + orange cap on the head
-for t, rx, ry, rot in ((0.38, 88, 56, -28), (0.60, 96, 62, -16),
-                       (0.78, 78, 52, -4)):
+# two SMALLER orange patches on the back + orange cap on the head
+# (v1's three big ovals chopped the body into caterpillar segments)
+for t, rx, ry, rot in ((0.45, 62, 40, -28), (0.68, 58, 38, -14)):
     x, y = pts[int(t * N)]
     img2 = rot_ellipse(skin, x, y - 16, rx, ry, rot, ORANGE)
     skin = img2
@@ -228,19 +244,24 @@ for t, ln, ang in ((0.45, 80, -38), (0.62, 88, -26)):
     img = rot_ellipse(img, x + nx * (r + ln * 0.12), y + ny * (r + ln * 0.12),
                       62, 26, ang, ORANGE)
     d = ImageDraw.Draw(img)
+# pectoral fin: overlaps the body's lower edge (v1 floated free below it);
+# INK underlay gives it the same black outline as the body
 px, py = pts[int(0.86 * N)]
-img = rot_ellipse(img, px + 8, py + 88, 62, 26, 24, ORANGE_L)
+img = rot_ellipse(img, px + 5, py + 52, 68, 32, 24, INK)
+img = rot_ellipse(img, px + 5, py + 52, 62, 26, 24, ORANGE_L)
 d = ImageDraw.Draw(img)
-d.line([(px, py + 40), (px + 8, py + 88)], fill=ORANGE_D, width=4)
 
 # ---- 8. head details: eye, mouth, gill, barbels -------------------------
 ex, ey = head_c[0] + 30, head_c[1] - 12
 ellipse(d, ex, ey, 28, 28, fill=WHITE, outline=INK, width=5)
 ellipse(d, ex + 6, ey + 2, 14, 14, fill=INK)
 ellipse(d, ex + 11, ey - 4, 5, 5, fill=WHITE)
-# open joyful mouth at the front tip
+# small dark-red fish mouth at the front tip, angled with the head
+# (v1's big bright-red oval read as lips); INK underlay = outline
 mx, my = head_c[0] + ux * 78, head_c[1] + uy * 78
-ellipse(d, mx, my, 20, 13, fill=(200, 60, 60), outline=INK, width=5)
+img = rot_ellipse(img, mx, my, 15, 10, 9, INK)
+img = rot_ellipse(img, mx, my, 12, 7, 9, (160, 30, 30))
+d = ImageDraw.Draw(img)
 # gill curve
 d.arc([head_c[0] - 52, head_c[1] - 46, head_c[0] + 22, head_c[1] + 62],
       start=300, end=90, fill=ORANGE_D, width=6)
@@ -268,6 +289,25 @@ ellipse(d, BX, 876, 140, 15, fill=(0, 0, 0))
 # foam ring at the bowl rim where the koi bursts out
 d.arc([BX - BR - 6, BY - BR - 6, BX + BR + 6, BY + BR + 6],
       start=180, end=360, fill=FOAM, width=10)
+
+# ---- 9b. tail fin — draped OVER the bowl rim, rooted in the body ---------
+# (v1's tail sat below the sill, detached like a slipper). Two flowing
+# lobes emerge from the body's lower end, cross the bowl's left rim and
+# end in a fork below the sill: white base, orange rim, INK outline,
+# gold rim-light on the upper edge — the body's own visual language.
+def tail_lobe(p0, p1, p2, w0, w1):
+    n = 25  # steps+1: first half of a ribbon_poly is the upper edge
+    outer = ribbon_poly(p0, p1, p2, w0 + 9, w1 + 5)
+    inner = ribbon_poly(p0, p1, p2, w0, w1)
+    d.polygon(outer, fill=ORANGE, outline=INK, width=6)
+    d.polygon(inner, fill=WHITE)
+    # gold rim-light along the upper edge, inset toward the centreline
+    inset = ribbon_poly(p0, p1, p2, w0 * 0.72, w1 * 0.72)[:n]
+    d.line(inset, fill=GOLD_L, width=5, joint="curve")
+
+
+tail_lobe((378, 692), (292, 742), (206, 826), 52, 7)
+tail_lobe((366, 728), (302, 808), (240, 890), 46, 7)
 
 # ---- 10. water trailing the koi + droplets toward the viewer -------------
 drop_layer = Image.new("RGBA", (W, H), (0, 0, 0, 0))
